@@ -25,8 +25,6 @@ create backend = do
 add :: Aggregator -> SimpleAction.SimpleAction a -> IO (Future.Future a)
 add aggregator@(entriesRef, backend) action = do
     case action of
-        SimpleAction.None ->
-            return $ pure ()
         SimpleAction.Get key -> do
             mVar <- newEmptyMVar
             let action = GetAction key
