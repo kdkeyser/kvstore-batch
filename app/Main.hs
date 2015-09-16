@@ -15,22 +15,28 @@ import qualified MemBackend
 import qualified Aggregator
 import qualified Future
 
+-- | Action
+-- | A wrapper type around a DSL instructions type, providing a Functor instance
 data Action (a :: * -> *) (b :: *) = forall c. Action (a c) (c -> b)
 
+instance Functor (Action a) where
+    fmap f (Action s g) = Action s (f.g)
+
+-- | MonadApplicative
+-- | Used to construct a runtime represenation of the monadic/applicative code
 data MonadApplicative (a :: * -> *) (b :: *) where
     Pure :: a b -> MonadApplicative a b
     MonadBind :: MonadApplicative a b -> (b -> MonadApplicative a c) -> MonadApplicative a c
     ApplicativeBind :: MonadApplicative a (b -> c) -> MonadApplicative a b -> MonadApplicative a c
 
-type MonadApplicativeAction = MonadApplicative (Action SimpleAction)
-
-instance Functor (Action a) where
-    fmap f (Action s g) = Action s (f.g)
-
 instance Functor a => Functor (MonadApplicative a) where
     fmap f (Pure a) = Pure $ fmap f a
     fmap f (MonadBind a b) = MonadBind a (fmap f . b)
     fmap f (ApplicativeBind a b) = ApplicativeBind (fmap (f.) a) b
+
+-- | MonadApplicativeAction
+-- | Monad / Applicative instances for the SimpleAction DSL: create a runtime (tree-like) representation
+type MonadApplicativeAction = MonadApplicative (Action SimpleAction)
 
 instance Monad MonadApplicativeAction where
     return x = Pure $ Action None $ const x
@@ -40,24 +46,26 @@ instance Applicative MonadApplicativeAction where
     pure x = Pure $ Action None $ const x
     a <*> b = ApplicativeBind a b
 
+-- | Building blocks, shorthand for the 2 basic operations
 get :: String -> MonadApplicativeAction String
 get key = Pure $ Action (Get key) id
 
 put :: String -> String -> MonadApplicativeAction ()
 put key value = Pure $ Action (Put key value) (const ())
-{-
+
+-- | Execute naively, and dump the representation
 printMAA :: Backend.Backend -> MonadApplicativeAction a -> IO a
-printMAA backend m =
+printMAA backend@(Backend batch) m =
     case m of
-        Pure a@(Action None f) -> do
+        Pure (Action None f) -> do
             putStrLn "None"
             return $ f ()
-        Pure a@(Action (Get key) f) -> do
-            value <- Backend.get backend key
+        Pure (Action (Get key) f) -> do
+            [GetResult value] <- batch [GetAction key]
             putStrLn $ "GET " ++ key ++ " = " ++ value
             return $ f value
-        Pure a@(Action (Put key value ) f ) -> do
-            Backend.put backend key value
+        Pure (Action (Put key value ) f ) -> do
+            batch [PutAction key value]
             putStrLn $ "PUT " ++ key ++ " -> " ++ value
             return $ f ()
         MonadBind a b -> do
@@ -69,31 +77,32 @@ printMAA backend m =
             f <- printMAA backend a
             result <- printMAA backend b
             return $ f result
--}
-runBatched :: Aggregator.Aggregator -> MonadApplicativeAction a -> IO (Future.Future a)
-runBatched aggregator m =
+
+-- | Execute optimzed: queue all backend operations on the Aggregator, wrap the result in a Future and only force the
+-- | evaluation of the Future when we need the result. Piggy-back all outstanding operations on the back-end operation
+-- | needed to force the evaluation of the Future
+recRun :: Aggregator.Aggregator -> MonadApplicativeAction a -> IO (Future.Future a)
+recRun aggregator m =
     case m of
         Pure (Action action f) -> do
             future <- Aggregator.add aggregator action
             return $ fmap f future
         MonadBind a b -> do
-            future <- runBatched aggregator a
+            future <- recRun aggregator a
             result <- Future.force future
-            runBatched aggregator $ b result
+            recRun aggregator $ b result
         ApplicativeBind a b -> do
-            future1 <- runBatched aggregator a
-            future2 <- runBatched aggregator b
+            future1 <- recRun aggregator a
+            future2 <- recRun aggregator b
             return $ future1 <*> future2
 
-sample :: MonadApplicativeAction String
-sample = do
-  v1 <- get "key1"
-  v2 <- get "key2"
-  put ("key"++ v1) v2
-  v3 <- get "key3"
-  put ("key" ++ v3) "sinterklaas"
-  get ("key" ++ v1)
+run :: Backend -> MonadApplicativeAction a -> IO a
+run backend m = do
+  aggregator <- Aggregator.create backend
+  result <- recRun aggregator m
+  Future.force result
 
+-- | Sample showing both monadic and applicative bind
 sample2 :: MonadApplicativeAction (String, String, String, String)
 sample2 =
   pure (,,) <*> 
@@ -105,14 +114,10 @@ sample2 =
       return (a,b,c,v2 ++ "_modified")
   )
 
--- | The main entry point.
+-- | Small example
 main :: IO ()
 main = do
     backend@(Backend batch) <- MemBackend.create
     batch [PutAction "key1" "1", PutAction "key2" "2", PutAction "key3" "3"]
-    aggregator <- Aggregator.create backend
-    resultFuture <- runBatched aggregator sample2
-    result <- Future.force resultFuture
+    result <- run backend sample2
     print result
-
-
