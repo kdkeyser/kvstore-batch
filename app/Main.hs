@@ -102,7 +102,7 @@ runSimpleAction backend m = do
 -- | Sample showing both monadic and applicative bind
 sample2 :: MonadApplicative SimpleAction (String, String, String, String)
 sample2 =
-  pure (,,) <*> 
+  (,,) <$> 
   get "key1" <*>
   get "key2" <*>
   get "key3" >>=
@@ -115,6 +115,12 @@ sample2 =
 main :: IO ()
 main = do
     backend@(Backend batch) <- MemBackend.create
-    batch [PutAction "key1" "1", PutAction "key2" "2", PutAction "key3" "3"]
+
+    -- fill the backend with some sample data
+    runSimpleAction backend $
+        put "key1" "1" *>
+        put "key2" "2" *>
+        put "key3" "3"
+
     result <- runSimpleAction backend sample2
     print result
