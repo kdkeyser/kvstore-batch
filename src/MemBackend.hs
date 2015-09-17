@@ -6,7 +6,9 @@ import Data.Map
 import Data.IORef
 import Data.Maybe
 import Control.Applicative
+import Debug.Trace
 import Backend
+
 
 type MemBackend = IORef (Map String String)
 
@@ -30,9 +32,9 @@ put backend key value = do
 batch :: MemBackend -> [BackendAction] -> IO [BackendResult]
 batch _backend [] = return []
 batch backend actions = do
-    putStrLn "MemBackend: start batch"
+    traceIO "MemBackend: start batch"
     result <- mapM executeAction actions
-    putStrLn "MemBackend: end batch"
+    traceIO "MemBackend: end batch"
     return result
   where
     executeAction (GetAction key) = GetResult <$> get backend key

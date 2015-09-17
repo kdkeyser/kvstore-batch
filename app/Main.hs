@@ -6,7 +6,6 @@
 
 module Main where
 
-
 import Control.Applicative
 
 import SimpleAction
@@ -15,6 +14,7 @@ import Backend
 import qualified MemBackend
 import qualified Aggregator
 import qualified Future
+import qualified TransactionBuilder
 
 -- | Action
 -- | A wrapper type around a "DSL instructions type", providing a Functor instance
@@ -50,22 +50,55 @@ instance Applicative (MonadApplicative a) where
 run :: (forall c. b c -> IO c) -> MonadApplicative b a -> IO a
 run runDSL m =
     case m of
-        Pure (Value x) -> do
-            putStrLn "Value"
+        Pure (Value x) -> 
             return x
         Pure (Action instruction f) -> do
-            putStrLn "DSL instruction"
             value <- runDSL instruction
             return $ f value
         MonadBind a b -> do
-            putStrLn "MonadBind"
             result <- run runDSL a
             run runDSL $ b result
         ApplicativeBind a b -> do
-            putStrLn "ApplicativeBind"
             f <- run runDSL a
             result <- run runDSL b
             return $ f result
+
+-- | Execute optimzed: queue all backend operations on the Aggregator, wrap the result in a Future and only force the
+-- | evaluation of the Future when we need the result. Piggy-back all outstanding operations on the back-end operation
+-- | needed to force the evaluation of that specific Future.
+recRunBatched :: Aggregator.Aggregator -> MonadApplicative SimpleAction a -> IO (Future.Future a)
+recRunBatched aggregator m =
+    case m of
+        Pure (Value x) -> return $ pure x
+        Pure (Action action f) -> do
+            future <- Aggregator.add aggregator action
+            return $ fmap f future
+        MonadBind a b -> do
+            future <- recRunBatched aggregator a
+            result <- Future.force future
+            recRunBatched aggregator $ b result
+        ApplicativeBind a b -> do
+            future1 <- recRunBatched aggregator a
+            future2 <- recRunBatched aggregator b
+            return $ future1 <*> future2
+
+runBatched :: Backend -> MonadApplicative SimpleAction a -> IO a
+runBatched backend m = do
+  aggregator <- Aggregator.create backend
+  result <- recRunBatched aggregator m
+  Future.force result
+
+-- | Build a transaction based on the GET/PUT operations
+-- | Gather all the input data (i.e. GET's on keys that were not yet modified in this transaction)
+-- | Return a list of ASSERTS and PUTS which defines the transaction
+buildTransaction :: Backend -> MonadApplicative SimpleAction a -> IO (a, TransactionBuilder.Transaction)
+buildTransaction backend m = do
+    transactionBuilder <- TransactionBuilder.create backend
+    result <- run (TransactionBuilder.add transactionBuilder) m
+    transaction <- TransactionBuilder.toTransaction transactionBuilder
+    return (result, transaction)
+
+-- | EXAMPLES
 
 -- | Building blocks, shorthand for the 2 basic operations
 get :: String -> MonadApplicative SimpleAction String
@@ -74,53 +107,54 @@ get key = Pure $ Action (Get key) id
 put :: String -> String -> MonadApplicative SimpleAction ()
 put key value = Pure $ Action (Put key value) (const ())
 
--- | Execute optimzed: queue all backend operations on the Aggregator, wrap the result in a Future and only force the
--- | evaluation of the Future when we need the result. Piggy-back all outstanding operations on the back-end operation
--- | needed to force the evaluation of that specific Future.
-recRunSimpleAction :: Aggregator.Aggregator -> MonadApplicative SimpleAction a -> IO (Future.Future a)
-recRunSimpleAction aggregator m =
-    case m of
-        Pure (Value x) -> return $ pure x
-        Pure (Action action f) -> do
-            future <- Aggregator.add aggregator action
-            return $ fmap f future
-        MonadBind a b -> do
-            future <- recRunSimpleAction aggregator a
-            result <- Future.force future
-            recRunSimpleAction aggregator $ b result
-        ApplicativeBind a b -> do
-            future1 <- recRunSimpleAction aggregator a
-            future2 <- recRunSimpleAction aggregator b
-            return $ future1 <*> future2
-
-runSimpleAction :: Backend -> MonadApplicative SimpleAction a -> IO a
-runSimpleAction backend m = do
-  aggregator <- Aggregator.create backend
-  result <- recRunSimpleAction aggregator m
-  Future.force result
-
--- | Sample showing both monadic and applicative bind
-sample2 :: MonadApplicative SimpleAction (String, String, String, String)
-sample2 =
-  (,,) <$> 
-  get "key1" <*>
-  get "key2" <*>
-  get "key3" >>=
-  (\(a,b,c) -> do
-      v2 <- get ("key" ++ b)
-      return (a,b,c,v2 ++ "_modified")
-  )
-
--- | Small example
-main :: IO ()
-main = do
-    backend <- MemBackend.create
-
-    -- fill the backend with some sample data
-    runSimpleAction backend $
+sampleBackend :: IO Backend
+sampleBackend = do
+   backend <- MemBackend.create
+   runBatched backend $
         put "key1" "1" *>
         put "key2" "2" *>
-        put "key3" "3"
+        put "key3" "3" 
+   return backend
+ 
+-- | Example of automatic batching
+batchExample :: IO ()
+batchExample = do
+    putStrLn "Batching example"
+    putStrLn "\nFill backend"
+    backend <- sampleBackend
+    putStrLn "\nStart batch execution"
 
-    result <- runSimpleAction backend sample2
-    print result
+    _result <- runBatched backend $
+          (,,) <$> 
+          get "key1" <*>
+          get "key2" <*>
+          get "key3" >>=
+          \(a,b,c) -> do
+          v2 <- get ("key" ++ b)
+          put v2 "test"
+          d <- get v2
+          return (a,b,c,d)
+    return ()
+
+-- | Example of transaction generation
+transactionExample :: IO ()
+transactionExample = do
+    putStrLn "Transaction example"
+    putStrLn "\nFill backend"
+    backend <- sampleBackend
+    putStrLn "\nStart transaction build"
+
+    (_result, transaction) <- buildTransaction backend $ do
+        v1 <- get "key1"
+        put "key2" $ v1 ++ v1
+        v2 <- get "key2"
+        v3 <- get "key3"
+        return (v1,v2,v3)
+
+    print transaction
+
+main :: IO ()
+main = do
+    batchExample
+    putStrLn ""
+    transactionExample
