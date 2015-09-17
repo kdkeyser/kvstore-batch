@@ -6,9 +6,9 @@
 
 module Main where
 
-import Control.Monad
+
 import Control.Applicative
-import Control.Concurrent
+
 import SimpleAction
 import Backend
 
@@ -114,7 +114,7 @@ sample2 =
 -- | Small example
 main :: IO ()
 main = do
-    backend@(Backend batch) <- MemBackend.create
+    backend <- MemBackend.create
 
     -- fill the backend with some sample data
     runSimpleAction backend $

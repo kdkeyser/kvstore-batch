@@ -28,7 +28,7 @@ put backend key value = do
     modifyIORef backend $ \kvMap -> insert key value kvMap
 
 batch :: MemBackend -> [BackendAction] -> IO [BackendResult]
-batch backend [] = return []
+batch _backend [] = return []
 batch backend actions = do
     putStrLn "MemBackend: start batch"
     result <- mapM executeAction actions
