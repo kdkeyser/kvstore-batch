@@ -23,6 +23,7 @@ data Action (a :: * -> *) (b :: *) = forall c. Action (a c) (c -> b) | Value b
 
 instance Functor (Action a) where
     fmap f (Action s g) = Action s (f.g)
+    fmap f (Value b) = Value $ f b
 
 -- | MonadApplicative
 -- | Used to construct a runtime represenation of the monadic/applicative code
@@ -34,7 +35,7 @@ data MonadApplicative (a :: * -> *) (b :: *) where
 
 instance Functor (MonadApplicative a) where
     fmap f (Pure a) = Pure $ fmap f a
-    fmap f (MonadBind a b) = MonadBind a (fmap f . b)
+    fmap f (MonadBind a b) = MonadBind a ( (fmap f) . b)
     fmap f (ApplicativeBind a b) = ApplicativeBind (fmap (f.) a) b
 
 instance Monad (MonadApplicative a) where
@@ -102,9 +103,9 @@ runSimpleAction backend m = do
 sample2 :: MonadApplicative SimpleAction (String, String, String, String)
 sample2 =
   pure (,,) <*> 
-  (get "key1") <*>
-  (get "key2") <*>
-  (get "key3") >>=
+  get "key1" <*>
+  get "key2" <*>
+  get "key3" >>=
   (\(a,b,c) -> do
       v2 <- get ("key" ++ b)
       return (a,b,c,v2 ++ "_modified")

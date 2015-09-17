@@ -5,6 +5,7 @@ module MemBackend where
 import Data.Map
 import Data.IORef
 import Data.Maybe
+import Control.Applicative
 import Backend
 
 type MemBackend = IORef (Map String String)
@@ -30,10 +31,10 @@ batch :: MemBackend -> [BackendAction] -> IO [BackendResult]
 batch backend [] = return []
 batch backend actions = do
     putStrLn "MemBackend: start batch"
-    result <- sequence $ Prelude.map executeAction actions
+    result <- mapM executeAction actions
     putStrLn "MemBackend: end batch"
     return result
   where
-    executeAction (GetAction key) = fmap GetResult $ get backend key
-    executeAction (PutAction key value) = fmap PutResult $ put backend key value
+    executeAction (GetAction key) = GetResult <$> get backend key
+    executeAction (PutAction key value) = PutResult <$> put backend key value
 

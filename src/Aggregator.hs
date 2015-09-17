@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE GADTs #-}
 
 module Aggregator where
@@ -23,25 +22,25 @@ create backend = do
     return (ioRef, backend)
 
 add :: Aggregator -> SimpleAction.SimpleAction a -> IO (Future.Future a)
-add aggregator@(entriesRef, backend) action = do
+add aggregator@(entriesRef, backend) action =
     case action of
         SimpleAction.Get key -> do
             mVar <- newEmptyMVar
             let action = GetAction key
-            let trigger = \(GetResult result) -> putMVar mVar result
+            let trigger (GetResult result) = putMVar mVar result
             atomicModifyIORef entriesRef (\entries -> ((action,trigger):entries, ()))
             return $ Future.Future (execute aggregator) (takeMVar mVar)
         SimpleAction.Put key value -> do
             mVar <- newEmptyMVar
             let action = PutAction key value
-            let trigger = \(PutResult result) -> putMVar mVar result
+            let trigger (PutResult result) = putMVar mVar result
             atomicModifyIORef entriesRef (\entries -> ((action,trigger):entries, ()))
             return $ Future.Future (execute aggregator) (takeMVar mVar)
 
 execute :: Aggregator -> IO ()
 execute aggregator@(entriesRef, Backend executeBatch) = do
    l <- atomicModifyIORef entriesRef (\entries -> ([], entries))
-   executeEntries l
+   executeEntries $ Data.List.reverse l
  where
    executeEntries [] = return ()
    executeEntries l =
@@ -50,5 +49,5 @@ execute aggregator@(entriesRef, Backend executeBatch) = do
        in do
          result <- executeBatch batch
          let l2 = zipExact result actions
-         sequence_ $ map (\(result,trigger) -> trigger result) l2
+         mapM_ (\(result,trigger) -> trigger result) l2
 
