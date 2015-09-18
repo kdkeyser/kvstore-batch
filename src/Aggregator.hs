@@ -21,20 +21,13 @@ create backend = do
     return (ioRef, backend)
 
 add :: Aggregator -> SimpleAction.SimpleAction a -> IO (Future.Future a)
-add aggregator@(entriesRef, _backend) action =
-    case action of
-        SimpleAction.Get key -> do
-            mVar <- newEmptyMVar
-            let getAction = GetAction key
-            let trigger (GetResult result) = putMVar mVar result
-            atomicModifyIORef entriesRef (\entries -> ((getAction,trigger):entries, ()))
-            return $ Future.Future (execute aggregator) (takeMVar mVar)
-        SimpleAction.Put key value -> do
-            mVar <- newEmptyMVar
-            let putAction = PutAction key value
-            let trigger (PutResult result) = putMVar mVar result
-            atomicModifyIORef entriesRef (\entries -> ((putAction,trigger):entries, ()))
-            return $ Future.Future (execute aggregator) (takeMVar mVar)
+add aggregator@(entriesRef, _backend) action = do
+    mVar <- newEmptyMVar
+    let newAction = case action of
+            SimpleAction.Get key -> (GetAction key, \(GetResult result) -> putMVar mVar result)
+            SimpleAction.Put key value -> (PutAction key value, \(PutResult result) -> putMVar mVar result)
+    atomicModifyIORef entriesRef (\entries -> (newAction:entries, ()))
+    return $ Future.Future (execute aggregator) (takeMVar mVar)
 
 execute :: Aggregator -> IO ()
 execute (entriesRef, Backend executeBatch) = do
@@ -43,8 +36,7 @@ execute (entriesRef, Backend executeBatch) = do
  where
    executeEntries [] = return ()
    executeEntries l =
-       let batch = map fst l
-           actions = map snd l
+       let (batch, actions) = Data.List.unzip l
        in do
          results <- executeBatch batch
          let l2 = zipExact results actions
