@@ -7,6 +7,7 @@
 module Main where
 
 import Control.Applicative
+import Control.Concurrent.STM
 
 import SimpleAction
 import Backend
@@ -93,9 +94,9 @@ runBatched backend m = do
 -- | Return a list of ASSERTS and PUTS which defines the transaction
 buildTransaction :: Backend -> MonadApplicative SimpleAction a -> IO (a, TransactionBuilder.Transaction)
 buildTransaction backend m = do
-    transactionBuilder <- TransactionBuilder.create backend
+    transactionBuilder <- atomically $ TransactionBuilder.create backend
     result <- run (TransactionBuilder.add transactionBuilder) m
-    transaction <- TransactionBuilder.toTransaction transactionBuilder
+    transaction <- atomically $ TransactionBuilder.toTransaction transactionBuilder
     return (result, transaction)
 
 -- | EXAMPLES

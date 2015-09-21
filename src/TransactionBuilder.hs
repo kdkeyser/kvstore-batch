@@ -2,60 +2,47 @@
 module TransactionBuilder where
 
 import Data.Map
-import Data.IORef
+
+import Control.Concurrent.STM
 import Backend
 
 import qualified SimpleAction
 
-data CachedBackend = CachedBackend (Map String String) Backend
-data CacheLookup = Hit | Miss
-
-cachedBackendGet :: CachedBackend -> String -> IO (CachedBackend, CacheLookup, String)
-cachedBackendGet cbackend@(CachedBackend cache backend@(Backend batch)) key = 
-  case Data.Map.lookup key cache of
-      Just value -> return (cbackend, Hit, value)
-      Nothing -> do
-                   [GetResult result] <- batch [GetAction key]
-                   return (CachedBackend (Data.Map.insert key result cache) backend, Miss, result)
-
-cachedBackendPut :: CachedBackend -> String -> String -> IO CachedBackend
-cachedBackendPut (CachedBackend cache backend@(Backend batch)) key value = do
-    [PutResult ()] <- batch [PutAction key value]
-    return $ CachedBackend (Data.Map.insert key value cache) backend
-
-data Transaction = Transaction [(String,String)] [(String,String)] deriving (Show)-- ASSERTS / PUTS
+data Asserts = Asserts [(String, String)] deriving (Show)
+data Puts = Puts [(String, String)] deriving (Show)
+data Transaction = Transaction Asserts Puts deriving (Show)
 
 emptyTransaction :: Transaction
-emptyTransaction = Transaction [] []
+emptyTransaction = Transaction (Asserts []) (Puts [])
 
-data TransactionBuilder = TransactionBuilder (IORef (CachedBackend,Transaction))
+type Cache = Map String String
+data TransactionBuilder = TransactionBuilder (TVar Cache) (TVar Cache) Backend
 
-create :: Backend.Backend -> IO TransactionBuilder
+create :: Backend -> STM TransactionBuilder
 create backend = do
-    ioRef <- newIORef (CachedBackend Data.Map.empty backend, emptyTransaction)
-    return $ TransactionBuilder ioRef
+    tVarCache <- newTVar Data.Map.empty
+    tVarPuts <- newTVar Data.Map.empty
+    return $ TransactionBuilder tVarCache tVarPuts backend
 
-toTransaction :: TransactionBuilder -> IO Transaction
-toTransaction (TransactionBuilder ioRef) = do
-    (_,transaction) <- readIORef ioRef
-    return transaction
-    
+toTransaction :: TransactionBuilder -> STM Transaction
+toTransaction (TransactionBuilder tVarGets tVarPuts _) = do
+    gets <- readTVar tVarGets
+    puts <- readTVar tVarPuts
+    return $ Transaction (Asserts $ Data.Map.assocs gets) (Puts $ Data.Map.assocs puts)
+   
 transactionBuilderGet :: TransactionBuilder -> String -> IO String
-transactionBuilderGet (TransactionBuilder ioRef) key = do
-    (cachedBackend, _) <- readIORef ioRef
-    (newCachedBackend, cacheLookup, value) <- cachedBackendGet cachedBackend key
-    atomicModifyIORef ioRef $ \(_, Transaction asserts puts) ->
-        case cacheLookup of
-             Hit -> ((newCachedBackend, Transaction asserts puts), ())
-             Miss -> ((newCachedBackend, Transaction (asserts ++ [(key,value)]) puts), ())
-    return value
+transactionBuilderGet (TransactionBuilder tVarGets _ (Backend batch)) key = do
+    getsMap <- readTVarIO tVarGets
+    case Data.Map.lookup key getsMap of
+        Just value -> return value
+        Nothing -> do
+            [GetResult result] <- batch [GetAction key]
+            atomically $ modifyTVar tVarGets $ Data.Map.insert key result
+            return result
 
 transactionBuilderPut :: TransactionBuilder -> String -> String -> IO ()
-transactionBuilderPut (TransactionBuilder ioRef) key value = do
-    (cachedBackend, _) <- readIORef ioRef     
-    newCachedBackend <- cachedBackendPut cachedBackend key value
-    atomicModifyIORef ioRef $ \(_, Transaction asserts puts) -> ((newCachedBackend, Transaction asserts (puts ++ [(key,value)])), ())
-    return ()
+transactionBuilderPut (TransactionBuilder _ tVarPuts _) key value =
+    atomically $ modifyTVar tVarPuts $ Data.Map.insert key value
 
 add :: TransactionBuilder -> SimpleAction.SimpleAction a -> IO a
 add transactionBuilder action =
