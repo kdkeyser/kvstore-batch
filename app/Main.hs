@@ -149,6 +149,7 @@ transactionExample = do
         v1 <- get "key1"
         put "key2" $ v1 ++ v1
         v2 <- get "key2"
+        put "key2" "rdn"
         v3 <- get "key3"
         return (v1,v2,v3)
 

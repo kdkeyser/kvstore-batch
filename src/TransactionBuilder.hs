@@ -16,33 +16,40 @@ emptyTransaction :: Transaction
 emptyTransaction = Transaction (Asserts []) (Puts [])
 
 type Cache = Map String String
-data TransactionBuilder = TransactionBuilder (TVar Cache) (TVar Cache) Backend
+data TransactionBuilder = TransactionBuilder (TVar Cache) (TVar Cache) (TVar Cache) Backend
 
 create :: Backend -> STM TransactionBuilder
 create backend = do
     tVarCache <- newTVar Data.Map.empty
+    tVarAsserts <- newTVar Data.Map.empty
     tVarPuts <- newTVar Data.Map.empty
-    return $ TransactionBuilder tVarCache tVarPuts backend
+    return $ TransactionBuilder tVarCache tVarAsserts tVarPuts backend
 
 toTransaction :: TransactionBuilder -> STM Transaction
-toTransaction (TransactionBuilder tVarGets tVarPuts _) = do
-    gets <- readTVar tVarGets
+toTransaction (TransactionBuilder _ tVarAsserts tVarPuts _) = do
+    asserts <- readTVar tVarAsserts
     puts <- readTVar tVarPuts
-    return $ Transaction (Asserts $ Data.Map.assocs gets) (Puts $ Data.Map.assocs puts)
+    return $ Transaction (Asserts $ Data.Map.assocs asserts) (Puts $ Data.Map.assocs puts)
    
 transactionBuilderGet :: TransactionBuilder -> String -> IO String
-transactionBuilderGet (TransactionBuilder tVarGets _ (Backend batch)) key = do
-    getsMap <- readTVarIO tVarGets
-    case Data.Map.lookup key getsMap of
+transactionBuilderGet (TransactionBuilder tVarCache tVarAsserts _ (Backend batch)) key = do
+    cache <- readTVarIO tVarCache
+    case Data.Map.lookup key cache of
         Just value -> return value
         Nothing -> do
             [GetResult result] <- batch [GetAction key]
-            atomically $ modifyTVar tVarGets $ Data.Map.insert key result
-            return result
+            atomically $ do
+                modifyTVar tVarCache $ Data.Map.insert key result
+                asserts <- readTVar tVarAsserts
+                case Data.Map.lookup key asserts of
+                  Just value -> return ()
+                  Nothing -> modifyTVar tVarAsserts $ Data.Map.insert key result
+                return result
 
 transactionBuilderPut :: TransactionBuilder -> String -> String -> IO ()
-transactionBuilderPut (TransactionBuilder _ tVarPuts _) key value =
-    atomically $ modifyTVar tVarPuts $ Data.Map.insert key value
+transactionBuilderPut (TransactionBuilder tVarCache _ tVarPuts _) key value =
+    atomically $ do
+        mapM_ (\tVar -> modifyTVar tVar $ Data.Map.insert key value) [tVarCache, tVarPuts]
 
 add :: TransactionBuilder -> SimpleAction.SimpleAction a -> IO a
 add transactionBuilder action =
