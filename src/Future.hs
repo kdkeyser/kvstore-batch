@@ -17,4 +17,3 @@ instance Applicative Future where
 force :: Future a -> IO a
 force (Future trigger action) =
     trigger >> action
-

@@ -5,15 +5,9 @@ import Data.Map
 
 import Control.Concurrent.STM
 import Backend
+import Transaction
 
 import qualified SimpleAction
-
-data Asserts = Asserts [(String, String)] deriving (Show)
-data Puts = Puts [(String, String)] deriving (Show)
-data Transaction = Transaction Asserts Puts deriving (Show)
-
-emptyTransaction :: Transaction
-emptyTransaction = Transaction (Asserts []) (Puts [])
 
 type Cache = Map String String
 data TransactionBuilder = TransactionBuilder (TVar Cache) (TVar Cache) (TVar Cache) Backend

@@ -16,6 +16,8 @@ import qualified MemBackend
 import qualified Aggregator
 import qualified Future
 import qualified TransactionBuilder
+import qualified BatchedTransactionBuilder
+import qualified Transaction
 
 -- | Action
 -- | A wrapper type around a "DSL instructions type", providing a Functor instance
@@ -67,32 +69,41 @@ run runDSL m =
 -- | Execute optimzed: queue all backend operations on the Aggregator, wrap the result in a Future and only force the
 -- | evaluation of the Future when we need the result. Piggy-back all outstanding operations on the back-end operation
 -- | needed to force the evaluation of that specific Future.
-recRunBatched :: Aggregator.Aggregator -> MonadApplicative SimpleAction a -> IO (Future.Future a)
-recRunBatched aggregator m =
+recRunBatched :: (forall b. (SimpleAction b -> IO (Future.Future b))) -> MonadApplicative SimpleAction a -> IO (Future.Future a)
+recRunBatched aggregate m =
     case m of
         Pure (Value x) -> return $ pure x
         Pure (Action action f) -> do
-            future <- Aggregator.add aggregator action
+            future <- aggregate action
             return $ fmap f future
         MonadBind a b -> do
-            future <- recRunBatched aggregator a
+            future <- recRunBatched aggregate a
             result <- Future.force future
-            recRunBatched aggregator $ b result
+            recRunBatched aggregate $ b result
         ApplicativeBind a b -> do
-            future1 <- recRunBatched aggregator a
-            future2 <- recRunBatched aggregator b
+            future1 <- recRunBatched aggregate a
+            future2 <- recRunBatched aggregate b
             return $ future1 <*> future2
 
 runBatched :: Backend -> MonadApplicative SimpleAction a -> IO a
 runBatched backend m = do
   aggregator <- Aggregator.create backend
-  result <- recRunBatched aggregator m
+  result <- recRunBatched (Aggregator.add aggregator) m
   Future.force result
 
+buildTransactionBatched :: Backend -> MonadApplicative SimpleAction a -> IO (a, Transaction.Transaction)
+buildTransactionBatched backend m = do
+  aggregator <- Aggregator.create backend
+  transactionBuilder <- BatchedTransactionBuilder.create aggregator
+  futureResult <- recRunBatched (BatchedTransactionBuilder.add transactionBuilder) m
+  result <- Future.force futureResult
+  transaction <- BatchedTransactionBuilder.toTransaction transactionBuilder
+  return (result, transaction)
+  
 -- | Build a transaction based on the GET/PUT operations
 -- | Gather all the input data (i.e. GET's on keys that were not yet modified in this transaction)
 -- | Return a list of ASSERTS and PUTS which defines the transaction
-buildTransaction :: Backend -> MonadApplicative SimpleAction a -> IO (a, TransactionBuilder.Transaction)
+buildTransaction :: Backend -> MonadApplicative SimpleAction a -> IO (a, Transaction.Transaction)
 buildTransaction backend m = do
     transactionBuilder <- atomically $ TransactionBuilder.create backend
     result <- run (TransactionBuilder.add transactionBuilder) m
@@ -145,7 +156,7 @@ transactionExample = do
     backend <- sampleBackend
     putStrLn "\nStart transaction build"
 
-    (_result, transaction) <- buildTransaction backend $ do
+    (_result, transaction) <- buildTransactionBatched backend $ do
         v1 <- get "key1"
         put "key2" $ v1 ++ v1
         v2 <- get "key2"
