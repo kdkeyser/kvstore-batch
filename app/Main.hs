@@ -166,8 +166,29 @@ transactionExample = do
 
     print transaction
 
+
+-- | Example of transaction generation
+transactionExample2 :: IO ()
+transactionExample2 = do
+    putStrLn "Transaction example"
+    putStrLn "\nFill backend"
+    backend <- sampleBackend
+    putStrLn "\nStart transaction build"
+
+    (_result, transaction) <- buildTransactionBatched backend $
+          (,,) <$> 
+          get "key1" <*>
+          get "key2" <*>
+          get "key3" >>=
+          \(a,b,c) -> do
+          v2 <- get ("key" ++ b)
+          put v2 "test"
+          d <- get v2
+          return (a,b,c,d)
+
+    print transaction
 main :: IO ()
 main = do
-    batchExample
-    putStrLn ""
-    transactionExample
+    --batchExample
+    --putStrLn ""
+    transactionExample2
