@@ -50,26 +50,22 @@ instance Applicative (MonadApplicative a) where
     a <*> b = ApplicativeBind a b
 
 -- | Generic runner
-run :: (forall c. b c -> IO c) -> MonadApplicative b a -> IO a
+run :: (Monad m, Functor m, Applicative m) => (forall c. b c -> m c) -> MonadApplicative b a -> m a
 run runDSL m =
     case m of
-        Pure (Value x) -> 
+        Pure (Value x) ->
             return x
-        Pure (Action instruction f) -> do
-            value <- runDSL instruction
-            return $ f value
-        MonadBind a b -> do
-            result <- run runDSL a
-            run runDSL $ b result
-        ApplicativeBind a b -> do
-            f <- run runDSL a
-            result <- run runDSL b
-            return $ f result
+        Pure (Action instruction f) ->
+            fmap f $ runDSL instruction
+        MonadBind a b ->
+            run runDSL a >>= \result -> run runDSL $ b result
+        ApplicativeBind a b ->
+            run runDSL a <*> run runDSL b
 
 -- | Execute optimzed: queue all backend operations on the Aggregator, wrap the result in a Future and only force the
 -- | evaluation of the Future when we need the result. Piggy-back all outstanding operations on the back-end operation
 -- | needed to force the evaluation of that specific Future.
-recRunBatched :: (forall b. (SimpleAction b -> IO (Future.Future b))) -> MonadApplicative SimpleAction a -> IO (Future.Future a)
+recRunBatched :: (forall b. (c b -> IO (Future.Future b))) -> MonadApplicative c a -> IO (Future.Future a)
 recRunBatched aggregate m =
     case m of
         Pure (Value x) -> return $ pure x

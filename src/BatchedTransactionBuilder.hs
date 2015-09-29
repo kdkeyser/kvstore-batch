@@ -54,7 +54,7 @@ transactionBuilderGet (TransactionBuilder tVarCache tVarAsserts _ aggregator) ke
 transactionBuilderPut :: TransactionBuilder -> String -> String -> IO (Future ())
 transactionBuilderPut (TransactionBuilder tVarCache _ tVarPuts _) key value =
     let futureValue = pure value in do
-    atomically $ do
+    atomically $ 
         mapM_ (\tVar -> modifyTVar tVar $ Data.Map.insert key futureValue) [tVarCache, tVarPuts]
     return $ pure ()
 

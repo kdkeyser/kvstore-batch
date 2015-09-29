@@ -14,6 +14,16 @@ instance Applicative Future where
         trigger = t1 >> t2
         result = r1 <*> r2
 
+instance Monad Future where
+    return x = pure x
+    (Future t1 r1) >>= f = Future trigger result
+      where
+          trigger = t1
+          result = do
+              r <- r1
+              let f2 = f r
+              force f2
+
 force :: Future a -> IO a
 force (Future trigger action) =
     trigger >> action

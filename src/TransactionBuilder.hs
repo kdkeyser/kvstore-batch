@@ -42,7 +42,7 @@ transactionBuilderGet (TransactionBuilder tVarCache tVarAsserts _ (Backend batch
 
 transactionBuilderPut :: TransactionBuilder -> String -> String -> IO ()
 transactionBuilderPut (TransactionBuilder tVarCache _ tVarPuts _) key value =
-    atomically $ do
+    atomically $ 
         mapM_ (\tVar -> modifyTVar tVar $ Data.Map.insert key value) [tVarCache, tVarPuts]
 
 add :: TransactionBuilder -> SimpleAction.SimpleAction a -> IO a
