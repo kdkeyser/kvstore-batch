@@ -13,7 +13,7 @@ import Future
 import qualified SimpleAction
 import qualified Aggregator
 
-type Cache = Map String (Future String)
+type Cache = Map String (FutureT IO String)
 data TransactionBuilder = TransactionBuilder (TVar Cache) (TVar Cache) (TVar Cache) Aggregator.Aggregator
 
 create :: Aggregator.Aggregator -> IO TransactionBuilder
@@ -36,7 +36,7 @@ toTransaction (TransactionBuilder _ tVarAsserts tVarPuts _) = do
     putStrLn "Building transaction (3)"
     return $ Transaction (Asserts $ Data.Map.assocs evaluatedAsserts) (Puts $ Data.Map.assocs evaluatedPuts)
    
-transactionBuilderGet :: TransactionBuilder -> String -> IO (Future String)
+transactionBuilderGet :: TransactionBuilder -> String -> IO (FutureT IO String)
 transactionBuilderGet (TransactionBuilder tVarCache tVarAsserts _ aggregator) key = do
     cache <- readTVarIO tVarCache
     case Data.Map.lookup key cache of
@@ -51,14 +51,14 @@ transactionBuilderGet (TransactionBuilder tVarCache tVarAsserts _ aggregator) ke
                   Nothing -> modifyTVar tVarAsserts $ Data.Map.insert key result
                 return result
 
-transactionBuilderPut :: TransactionBuilder -> String -> String -> IO (Future ())
+transactionBuilderPut :: TransactionBuilder -> String -> String -> IO (FutureT IO ())
 transactionBuilderPut (TransactionBuilder tVarCache _ tVarPuts _) key value =
     let futureValue = pure value in do
     atomically $ 
         mapM_ (\tVar -> modifyTVar tVar $ Data.Map.insert key futureValue) [tVarCache, tVarPuts]
     return $ pure ()
 
-add :: TransactionBuilder -> SimpleAction.SimpleAction a -> IO (Future a)
+add :: TransactionBuilder -> SimpleAction.SimpleAction a -> IO (FutureT IO a)
 add transactionBuilder action =
     case action of
         SimpleAction.Get key -> transactionBuilderGet transactionBuilder key

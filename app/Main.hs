@@ -65,7 +65,7 @@ run runDSL m =
 -- | Execute optimzed: queue all backend operations on the Aggregator, wrap the result in a Future and only force the
 -- | evaluation of the Future when we need the result. Piggy-back all outstanding operations on the back-end operation
 -- | needed to force the evaluation of that specific Future.
-recRunBatched :: (forall b. (c b -> IO (Future.Future b))) -> MonadApplicative c a -> IO (Future.Future a)
+recRunBatched :: (forall b. (c b -> IO (Future.FutureT IO b))) -> MonadApplicative c a -> IO (Future.FutureT IO a)
 recRunBatched aggregate m =
     case m of
         Pure (Value x) -> return $ pure x

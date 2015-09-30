@@ -6,7 +6,6 @@ import Data.IORef
 import Control.Concurrent
 import Safe.Exact
 import Backend
-import Control.Monad.Trans
 
 import qualified SimpleAction
 import qualified Data.List
@@ -21,13 +20,13 @@ create backend = do
     ioRef <- newIORef []
     return (ioRef, backend)
 
-add :: Aggregator -> SimpleAction.SimpleAction a -> (Future.FutureT IO a)
+add :: Aggregator -> SimpleAction.SimpleAction a -> IO (Future.FutureT IO a)
 add aggregator@(entriesRef, _backend) action = do
-    mVar <- liftIO $ newEmptyMVar
+    mVar <- newEmptyMVar
     let newAction = case action of
             SimpleAction.Get key -> (GetAction key, \(GetResult result) -> putMVar mVar result)
             SimpleAction.Put key value -> (PutAction key value, \(PutResult result) -> putMVar mVar result)
-    liftIO $ atomicModifyIORef entriesRef (\entries -> (newAction:entries, ()))
+    atomicModifyIORef entriesRef (\entries -> (newAction:entries, ()))
     return $ Future.Future (execute aggregator) (readMVar mVar)
 
 execute :: Aggregator -> IO ()
