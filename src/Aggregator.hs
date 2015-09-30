@@ -28,7 +28,7 @@ add aggregator@(entriesRef, _backend) action = do
             SimpleAction.Get key -> (GetAction key, \(GetResult result) -> putMVar mVar result)
             SimpleAction.Put key value -> (PutAction key value, \(PutResult result) -> putMVar mVar result)
     liftIO $ atomicModifyIORef entriesRef (\entries -> (newAction:entries, ()))
-    return $ Future.Future (execute aggregator) (readMVar mVar)
+    Future.Future (execute aggregator) (readMVar mVar)
 
 execute :: Aggregator -> IO ()
 execute (entriesRef, Backend executeBatch) = do

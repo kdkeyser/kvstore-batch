@@ -15,11 +15,13 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     SimpleAction, Aggregator, Backend, MemBackend, Future, TransactionBuilder
+  exposed-modules:     SimpleAction, Aggregator, Backend, MemBackend, Future, TransactionBuilder, BatchedTransactionBuilder, Transaction
   build-depends:       base >= 4.7 && < 5,
                        containers,
                        safe,
-                       stm
+                       stm,
+                       transformers,
+                       mtl
   default-language:    Haskell2010
 
 executable kvstore-batch-exe

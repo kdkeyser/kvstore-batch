@@ -62,36 +62,17 @@ run runDSL m =
         ApplicativeBind a b ->
             run runDSL a <*> run runDSL b
 
--- | Execute optimzed: queue all backend operations on the Aggregator, wrap the result in a Future and only force the
--- | evaluation of the Future when we need the result. Piggy-back all outstanding operations on the back-end operation
--- | needed to force the evaluation of that specific Future.
-recRunBatched :: (forall b. (c b -> IO (Future.Future b))) -> MonadApplicative c a -> IO (Future.Future a)
-recRunBatched aggregate m =
-    case m of
-        Pure (Value x) -> return $ pure x
-        Pure (Action action f) -> do
-            future <- aggregate action
-            return $ fmap f future
-        MonadBind a b -> do
-            future <- recRunBatched aggregate a
-            result <- Future.force future
-            recRunBatched aggregate $ b result
-        ApplicativeBind a b -> do
-            future1 <- recRunBatched aggregate a
-            future2 <- recRunBatched aggregate b
-            return $ future1 <*> future2
-
 runBatched :: Backend -> MonadApplicative SimpleAction a -> IO a
 runBatched backend m = do
   aggregator <- Aggregator.create backend
-  result <- recRunBatched (Aggregator.add aggregator) m
-  Future.force result
+  let futureResult = run (Aggregator.add aggregator) m
+  Future.force futureResult
 
 buildTransactionBatched :: Backend -> MonadApplicative SimpleAction a -> IO (a, Transaction.Transaction)
 buildTransactionBatched backend m = do
   aggregator <- Aggregator.create backend
   transactionBuilder <- BatchedTransactionBuilder.create aggregator
-  futureResult <- recRunBatched (BatchedTransactionBuilder.add transactionBuilder) m
+  let futureResult = run (BatchedTransactionBuilder.add transactionBuilder) m
   result <- Future.force futureResult
   transaction <- BatchedTransactionBuilder.toTransaction transactionBuilder
   return (result, transaction)

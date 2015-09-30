@@ -1,6 +1,7 @@
 module Future where
 
 import Control.Applicative
+import Control.Monad.IO.Class
 
 data FutureT m a = Future (m ()) (m a) -- trigger / result
 
@@ -14,7 +15,7 @@ instance (Applicative m) => Applicative (FutureT m) where
         trigger = t1 *> t2
         result = r1 <*> r2
 
-instance (Applicative m, Monad m) => Monad (FutureT m) where
+instance (Monad m) => Monad (FutureT m) where
     return x = pure x
     (Future t1 r1) >>= f = Future trigger result
       where
@@ -23,6 +24,9 @@ instance (Applicative m, Monad m) => Monad (FutureT m) where
               r <- r1
               let f2 = f r
               force f2
+
+instance (MonadIO m) => MonadIO (FutureT m) where
+    liftIO x = Future (return ()) (liftIO x)
 
 force :: (Monad m) => FutureT m a -> m a
 force (Future trigger action) =
