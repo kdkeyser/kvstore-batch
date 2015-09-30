@@ -2,19 +2,19 @@ module Future where
 
 import Control.Applicative
 
-data Future a = Future (IO ()) (IO a) -- trigger / result
+data FutureT m a = Future (m ()) (m a) -- trigger / result
 
-instance Functor Future where
+instance (Functor m) => Functor (FutureT m) where
     fmap f (Future trigger result) = Future trigger (fmap f result)
 
-instance Applicative Future where
-    pure x = Future (return ()) (return x)
+instance (Applicative m) => Applicative (FutureT m) where
+    pure x = Future (pure ()) (pure x)
     (Future t1 r1) <*> (Future t2 r2) = Future trigger result
       where
-        trigger = t1 >> t2
+        trigger = t1 *> t2
         result = r1 <*> r2
 
-instance Monad Future where
+instance (Applicative m, Monad m) => Monad (FutureT m) where
     return x = pure x
     (Future t1 r1) >>= f = Future trigger result
       where
@@ -24,6 +24,6 @@ instance Monad Future where
               let f2 = f r
               force f2
 
-force :: Future a -> IO a
+force :: (Monad m) => FutureT m a -> m a
 force (Future trigger action) =
     trigger >> action
