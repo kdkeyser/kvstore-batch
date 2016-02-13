@@ -22,40 +22,41 @@ import qualified Transaction
 -- | Action
 -- | A wrapper type around a "DSL instructions type", providing a Functor instance
 -- | First type parameter indicates the DSL, second indicates the result type of the -executed- action.
-data Action (a :: * -> *) (b :: *) = forall c. Action (a c) (c -> b) | Value b
+data Action (a :: * -> *) (b :: *) = forall c. Action (a c) (c -> b) 
 
 instance Functor (Action a) where
     fmap f (Action s g) = Action s (f.g)
-    fmap f (Value b) = Value $ f b
 
 -- | MonadApplicative
 -- | Used to construct a runtime represenation of the monadic/applicative code
 -- | First type parameter indicates the DSL, second indicates the result type
 data MonadApplicative (a :: * -> *) (b :: *) where
-    Pure :: Action a b -> MonadApplicative a b
+    Value :: b -> MonadApplicative a b
+    SingleAction :: Action a b -> MonadApplicative a b
     MonadBind :: MonadApplicative a b -> (b -> MonadApplicative a c) -> MonadApplicative a c
     ApplicativeBind :: MonadApplicative a (b -> c) -> MonadApplicative a b -> MonadApplicative a c
 
 instance Functor (MonadApplicative a) where
-    fmap f (Pure a) = Pure $ fmap f a
+    fmap f (Value a) = Value $ f a
+    fmap f (SingleAction a) = SingleAction $ fmap f a
     fmap f (MonadBind a b) = MonadBind a ( (fmap f) . b)
     fmap f (ApplicativeBind a b) = ApplicativeBind (fmap (f.) a) b
 
 instance Monad (MonadApplicative a) where
-    return x = Pure $ Value x
+    return x = Value x
     a >>= b = MonadBind a b
 
 instance Applicative (MonadApplicative a) where
-    pure x = Pure $ Value x
+    pure x = Value x
     a <*> b = ApplicativeBind a b
 
 -- | Generic runner
 run :: (Monad m, Functor m, Applicative m) => (forall c. b c -> m c) -> MonadApplicative b a -> m a
 run runDSL m =
     case m of
-        Pure (Value x) ->
+        Value x ->
             return x
-        Pure (Action instruction f) ->
+        SingleAction (Action instruction f) ->
             fmap f $ runDSL instruction
         MonadBind a b ->
             run runDSL a >>= \result -> run runDSL $ b result
@@ -68,8 +69,8 @@ run runDSL m =
 recRunBatched :: (forall b. (c b -> IO (Future.FutureT IO b))) -> MonadApplicative c a -> IO (Future.FutureT IO a)
 recRunBatched aggregate m =
     case m of
-        Pure (Value x) -> return $ pure x
-        Pure (Action action f) -> do
+        Value x -> return $ pure x
+        SingleAction (Action action f) -> do
             future <- aggregate action
             return $ fmap f future
         MonadBind a b -> do
@@ -110,10 +111,10 @@ buildTransaction backend m = do
 
 -- | Building blocks, shorthand for the 2 basic operations
 get :: String -> MonadApplicative SimpleAction String
-get key = Pure $ Action (Get key) id
+get key = SingleAction $ Action (Get key) id
 
 put :: String -> String -> MonadApplicative SimpleAction ()
-put key value = Pure $ Action (Put key value) (const ())
+put key value = SingleAction $ Action (Put key value) (const ())
 
 sampleBackend :: IO Backend
 sampleBackend = do
