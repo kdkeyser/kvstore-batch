@@ -9,8 +9,11 @@ module Main where
 import Control.Applicative
 import Control.Concurrent.STM
 
-import SimpleAction
+import KVOperation
+import Action
 import Backend
+--import MonadAction
+import DSL
 
 import qualified MemBackend
 import qualified Aggregator
@@ -19,76 +22,45 @@ import qualified TransactionBuilder
 import qualified BatchedTransactionBuilder
 import qualified Transaction
 
--- | Action
--- | A wrapper type around a "DSL instructions type", providing a Functor instance
--- | First type parameter indicates the DSL, second indicates the result type of the -executed- action.
-data Action (a :: * -> *) (b :: *) = forall c. Action (a c) (c -> b) 
-
-instance Functor (Action a) where
-    fmap f (Action s g) = Action s (f.g)
-
--- | MonadApplicative
--- | Used to construct a runtime represenation of the monadic/applicative code
--- | First type parameter indicates the DSL, second indicates the result type
-data MonadApplicative (a :: * -> *) (b :: *) where
-    Value :: b -> MonadApplicative a b
-    SingleAction :: Action a b -> MonadApplicative a b
-    MonadBind :: MonadApplicative a b -> (b -> MonadApplicative a c) -> MonadApplicative a c
-    ApplicativeBind :: MonadApplicative a (b -> c) -> MonadApplicative a b -> MonadApplicative a c
-
-instance Functor (MonadApplicative a) where
-    fmap f (Value a) = Value $ f a
-    fmap f (SingleAction a) = SingleAction $ fmap f a
-    fmap f (MonadBind a b) = MonadBind a ( (fmap f) . b)
-    fmap f (ApplicativeBind a b) = ApplicativeBind (fmap (f.) a) b
-
-instance Monad (MonadApplicative a) where
-    return x = Value x
-    a >>= b = MonadBind a b
-
-instance Applicative (MonadApplicative a) where
-    pure x = Value x
-    a <*> b = ApplicativeBind a b
-
 -- | Generic runner
-run :: (Monad m, Functor m, Applicative m) => (forall c. b c -> m c) -> MonadApplicative b a -> m a
+run :: (Monad m, Functor m, Applicative m) => (forall c. b c -> m c) -> DSL b a -> m a
 run runDSL m =
     case m of
-        Value x ->
+        Pure x ->
             return x
-        SingleAction (Action instruction f) ->
+        Single (Action instruction f) ->
             fmap f $ runDSL instruction
         MonadBind a b ->
             run runDSL a >>= \result -> run runDSL $ b result
-        ApplicativeBind a b ->
+        ApBind a b ->
             run runDSL a <*> run runDSL b
 
 -- | Execute optimzed: queue all backend operations on the Aggregator, wrap the result in a Future and only force the
 -- | evaluation of the Future when we need the result. Piggy-back all outstanding operations on the back-end operation
 -- | needed to force the evaluation of that specific Future.
-recRunBatched :: (forall b. (c b -> IO (Future.FutureT IO b))) -> MonadApplicative c a -> IO (Future.FutureT IO a)
+recRunBatched :: (forall b. (c b -> IO (Future.FutureT IO b))) -> DSL c a -> IO (Future.FutureT IO a)
 recRunBatched aggregate m =
     case m of
-        Value x -> return $ pure x
-        SingleAction (Action action f) -> do
+        Pure x -> return $ pure x
+        Single (Action action f) -> do
             future <- aggregate action
             return $ fmap f future
         MonadBind a b -> do
             future <- recRunBatched aggregate a
             result <- Future.force future
             recRunBatched aggregate $ b result
-        ApplicativeBind a b -> do
+        ApBind a b -> do
             future1 <- recRunBatched aggregate a
             future2 <- recRunBatched aggregate b
             return $ future1 <*> future2
 
-runBatched :: Backend -> MonadApplicative SimpleAction a -> IO a
+runBatched :: Backend -> DSL KVOperation a -> IO a
 runBatched backend m = do
   aggregator <- Aggregator.create backend
   result <- recRunBatched (Aggregator.add aggregator) m
   Future.force result
 
-buildTransactionBatched :: Backend -> MonadApplicative SimpleAction a -> IO (a, Transaction.Transaction)
+buildTransactionBatched :: Backend -> DSL KVOperation a -> IO (a, Transaction.Transaction)
 buildTransactionBatched backend m = do
   aggregator <- Aggregator.create backend
   transactionBuilder <- BatchedTransactionBuilder.create aggregator
@@ -100,7 +72,7 @@ buildTransactionBatched backend m = do
 -- | Build a transaction based on the GET/PUT operations
 -- | Gather all the input data (i.e. GET's on keys that were not yet modified in this transaction)
 -- | Return a list of ASSERTS and PUTS which defines the transaction
-buildTransaction :: Backend -> MonadApplicative SimpleAction a -> IO (a, Transaction.Transaction)
+buildTransaction :: Backend -> DSL KVOperation a -> IO (a, Transaction.Transaction)
 buildTransaction backend m = do
     transactionBuilder <- atomically $ TransactionBuilder.create backend
     result <- run (TransactionBuilder.add transactionBuilder) m
@@ -110,82 +82,81 @@ buildTransaction backend m = do
 -- | EXAMPLES
 
 -- | Building blocks, shorthand for the 2 basic operations
-get :: String -> MonadApplicative SimpleAction String
-get key = SingleAction $ Action (Get key) id
+get :: String -> DSL KVOperation String
+get key = Single $ Action (Get key) id
 
-put :: String -> String -> MonadApplicative SimpleAction ()
-put key value = SingleAction $ Action (Put key value) (const ())
+put :: String -> String -> DSL KVOperation ()
+put key value = Single $ Action (Put key value) (const ())
 
-sampleBackend :: IO Backend
-sampleBackend = do
+getBatchSampleBackend :: IO Backend
+getBatchSampleBackend = do
    backend <- MemBackend.create
    runBatched backend $
-        put "key1" "1" *>
-        put "key2" "2" *>
-        put "key3" "3" 
+        put "user_7_pass" "7DFJ45FDXM" *>
+        put "user_7_site" "www.haskell.org" *>
+        put "user_12_pass" "DFGRED43S" *>
+        put "user_12_site" "www.ocaml.org" *>
+        put "user_18_pass" "DSZWQ52VB23V" *>
+        put "user_18_site" "www.scala.org" *>
+        put "default_site" "www.zombo.com"
    return backend
+
+getBatch :: DSL KVOperation (String,String,String)
+getBatch = (,,) <$>
+  get "user_7_pass" <*>
+  get "user_12_pass" <*>
+  get "user_18_pass" >>=
+    \(pass7, pass12, pass18) -> (,,) <$>
+          (if (check 7 pass7)  then get "user_7_site"  else get "default_site") <*>
+      (if (check 12 pass12) then get "user_12_site" else get "default_site") <*>
+        (if (check 18 pass18) then get "user_18_site" else get "default_site")
+  where
+    check 7 _  = True
+    check 12 _ = False
+    check 18 _ = False
+
+addUserSampleBackend :: IO Backend
+addUserSampleBackend = do
+   backend <- MemBackend.create
+   runBatched backend $
+        put "user_7_pass" "7DFJ45FDXM" *>
+        put "user_7_site" "www.haskell.org" *>
+        put "user_12_pass" "DFGRED43S" *>
+        put "user_12_site" "www.ocaml.org" *>
+        put "user_count" "17"
+   return backend
+
+addUser :: String ->  String -> DSL KVOperation ()
+addUser password site = do
+  numberOfUsers <- read <$> get "user_count"
+  let nextUser = show $ numberOfUsers + 1
+  put ("user_" ++ nextUser ++ "_pass") password
+  put ("user_" ++ nextUser ++ "_site") site
+  put "user_count" nextUser
  
--- | Example of automatic batching
 batchExample :: IO ()
 batchExample = do
-    putStrLn "Batching example"
-    putStrLn "\nFill backend"
-    backend <- sampleBackend
-    putStrLn "\nStart batch execution"
+  putStrLn "Batching example"
+  putStrLn "\nFill backend"
+  sampleBackend <- getBatchSampleBackend
+  
+  putStrLn "\nStart batched run"
+  _result <- runBatched sampleBackend getBatch
+  putStrLn "\nBatched run done"
+  return ()
 
-    _result <- runBatched backend $
-          (,,) <$> 
-          get "key1" <*>
-          get "key2" <*>
-          get "key3" >>=
-          \(a,b,c) -> do
-          v2 <- get ("key" ++ b)
-          put v2 "test"
-          d <- get v2
-          return (a,b,c,d)
-    return ()
-
--- | Example of transaction generation
 transactionExample :: IO ()
 transactionExample = do
-    putStrLn "Transaction example"
-    putStrLn "\nFill backend"
-    backend <- sampleBackend
-    putStrLn "\nStart transaction build"
+  putStrLn "Transaction example"
+  putStrLn "\nFill backend"
+  sampleBackend <- addUserSampleBackend
+  putStrLn "\nStart transaction build"
+  (_result, transaction) <- buildTransactionBatched sampleBackend $ addUser "rickAE870D" "www.clojure.org"
+  putStrLn $ show transaction
+  putStrLn "\nTransaction example done"
 
-    (_result, transaction) <- buildTransactionBatched backend $ do
-        v1 <- get "key1"
-        put "key2" $ v1 ++ v1
-        v2 <- get "key2"
-        put "key2" "rdn"
-        v3 <- get "key3"
-        return (v1,v2,v3)
-
-    print transaction
-
-
--- | Example of transaction generation
-transactionExample2 :: IO ()
-transactionExample2 = do
-    putStrLn "Transaction example"
-    putStrLn "\nFill backend"
-    backend <- sampleBackend
-    putStrLn "\nStart transaction build"
-
-    (_result, transaction) <- buildTransactionBatched backend $
-          (,,) <$> 
-          get "key1" <*>
-          get "key2" <*>
-          get "key3" >>=
-          \(a,b,c) -> do
-          v2 <- get ("key" ++ b)
-          put v2 "test"
-          d <- get v2
-          return (a,b,c,d)
-
-    print transaction
 main :: IO ()
 main = do
-    --batchExample
-    --putStrLn ""
-    transactionExample2
+  batchExample
+  transactionExample
+

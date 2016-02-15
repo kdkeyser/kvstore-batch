@@ -15,7 +15,7 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     SimpleAction, Aggregator, Backend, MemBackend, Future, TransactionBuilder, BatchedTransactionBuilder, Transaction
+  exposed-modules:     MonadAction, DSL, Action, KVOperation, Aggregator, Backend, MemBackend, Future, TransactionBuilder, BatchedTransactionBuilder, Transaction
   build-depends:       base >= 4.7 && < 5,
                        containers,
                        safe,

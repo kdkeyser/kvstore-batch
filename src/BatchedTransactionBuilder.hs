@@ -10,7 +10,7 @@ import Control.Applicative
 import Transaction
 import Future
 
-import qualified SimpleAction
+import qualified KVOperation
 import qualified Aggregator
 
 type Cache = Map String (FutureT IO String)
@@ -25,15 +25,12 @@ create aggregator = do
 
 toTransaction :: TransactionBuilder -> IO Transaction
 toTransaction (TransactionBuilder _ tVarAsserts tVarPuts _) = do
-    putStrLn "Building transaction"
     (asserts, puts) <- atomically $ do
           asserts <- readTVar tVarAsserts
           puts <- readTVar tVarPuts
           return (asserts,puts)
-    putStrLn "Building transaction (2)"
     evaluatedAsserts <- mapM force asserts
     evaluatedPuts <- mapM force puts
-    putStrLn "Building transaction (3)"
     return $ Transaction (Asserts $ Data.Map.assocs evaluatedAsserts) (Puts $ Data.Map.assocs evaluatedPuts)
    
 transactionBuilderGet :: TransactionBuilder -> String -> IO (FutureT IO String)
@@ -42,7 +39,7 @@ transactionBuilderGet (TransactionBuilder tVarCache tVarAsserts _ aggregator) ke
     case Data.Map.lookup key cache of
         Just value -> return value
         Nothing -> do
-            result <- Aggregator.add aggregator (SimpleAction.Get key)
+            result <- Aggregator.add aggregator (KVOperation.Get key)
             atomically $ do
                 modifyTVar tVarCache $ Data.Map.insert key result
                 asserts <- readTVar tVarAsserts
@@ -58,8 +55,8 @@ transactionBuilderPut (TransactionBuilder tVarCache _ tVarPuts _) key value =
         mapM_ (\tVar -> modifyTVar tVar $ Data.Map.insert key futureValue) [tVarCache, tVarPuts]
     return $ pure ()
 
-add :: TransactionBuilder -> SimpleAction.SimpleAction a -> IO (FutureT IO a)
+add :: TransactionBuilder -> KVOperation.KVOperation a -> IO (FutureT IO a)
 add transactionBuilder action =
     case action of
-        SimpleAction.Get key -> transactionBuilderGet transactionBuilder key
-        SimpleAction.Put key value -> transactionBuilderPut transactionBuilder key value
+        KVOperation.Get key -> transactionBuilderGet transactionBuilder key
+        KVOperation.Put key value -> transactionBuilderPut transactionBuilder key value

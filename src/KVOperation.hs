@@ -1,11 +1,11 @@
 {-# LANGUAGE GADTs #-}
-module SimpleAction where
+module KVOperation where
 
 -- | Basic key/value store API
 -- | Get retrieve the value associated with a key
 -- | Put sets the value associated with a key
 -- | Key/values are strings
-data SimpleAction a where
-    Get :: String -> SimpleAction String
-    Put :: String -> String -> SimpleAction ()
+data KVOperation a where
+    Get :: String -> KVOperation String
+    Put :: String -> String -> KVOperation ()
 

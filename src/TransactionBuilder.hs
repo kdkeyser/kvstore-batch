@@ -7,7 +7,7 @@ import Control.Concurrent.STM
 import Backend
 import Transaction
 
-import qualified SimpleAction
+import qualified KVOperation
 
 type Cache = Map String String
 data TransactionBuilder = TransactionBuilder (TVar Cache) (TVar Cache) (TVar Cache) Backend
@@ -45,8 +45,8 @@ transactionBuilderPut (TransactionBuilder tVarCache _ tVarPuts _) key value =
     atomically $ 
         mapM_ (\tVar -> modifyTVar tVar $ Data.Map.insert key value) [tVarCache, tVarPuts]
 
-add :: TransactionBuilder -> SimpleAction.SimpleAction a -> IO a
+add :: TransactionBuilder -> KVOperation.KVOperation a -> IO a
 add transactionBuilder action =
     case action of
-        SimpleAction.Get key -> transactionBuilderGet transactionBuilder key
-        SimpleAction.Put key value -> transactionBuilderPut transactionBuilder key value
+        KVOperation.Get key -> transactionBuilderGet transactionBuilder key
+        KVOperation.Put key value -> transactionBuilderPut transactionBuilder key value
