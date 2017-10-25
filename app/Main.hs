@@ -3,6 +3,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ApplicativeDo #-}
 
 module Main where
 
@@ -115,6 +116,51 @@ getBatch = (,,) <$>
     check 12 _ = False
     check 18 _ = False
 
+getBatchDo :: DSL KVOperation (String,String,String)
+getBatchDo = do
+  pass7 <-  get "user_7_pass"
+  pass12 <- get "user_12_pass"
+  pass18 <- get "user_18_pass"
+  site7 <- if (check 7 pass7) then get "user_7_site"  else get "default_site"
+  site12 <- if (check 12 pass12) then get "user_12_site" else get "default_site"
+  site18 <- if (check 18 pass18) then get "user_18_site" else get "default_site"
+  pure (site7, site12, site18)
+  where
+    check 7 _  = True
+    check 12 _ = False
+    check 18 _ = False
+
+getBatchDoReorder :: DSL KVOperation (String,String,String)
+getBatchDoReorder = do
+  pass7 <-  get "user_7_pass"
+  site7 <- if (check 7 pass7) then get "user_7_site"  else get "default_site"
+  pass12 <- get "user_12_pass"
+  site12 <- if (check 12 pass12) then get "user_12_site" else get "default_site"
+  pass18 <- get "user_18_pass"
+  site18 <- if (check 18 pass18) then get "user_18_site" else get "default_site"
+  pure (site7, site12, site18)
+  where
+    check 7 _  = True
+    check 12 _ = False
+    check 18 _ = False
+
+batchStepDo :: String -> (String -> String -> Bool) -> DSL KVOperation String
+batchStepDo userId check = do
+  pass <- get $ "user_" ++ userId ++ "_pass"
+  site <- if (check userId pass) then get $ "user_" ++ userId ++ "_site" else get "default_site"
+  return site
+
+getBatchDoStep :: DSL KVOperation (String,String,String)
+getBatchDoStep = do
+  site7 <- batchStepDo "7" check
+  site12 <- batchStepDo "12" check
+  site18 <- batchStepDo "18" check
+  pure (site7, site12, site18)
+  where
+    check "7" _  = True
+    check "12" _ = False
+    check "18" _ = False
+
 addUserSampleBackend :: IO Backend
 addUserSampleBackend = do
    backend <- MemBackend.create
@@ -141,7 +187,7 @@ batchExample = do
   sampleBackend <- getBatchSampleBackend
   
   putStrLn "\nStart batched run"
-  _result <- runBatched sampleBackend getBatch
+  _result <- runBatched sampleBackend getBatchDoStep
   putStrLn "\nBatched run done"
   return ()
 
@@ -158,5 +204,5 @@ transactionExample = do
 main :: IO ()
 main = do
   batchExample
-  transactionExample
+  --transactionExample
 
